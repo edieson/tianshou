@@ -83,6 +83,14 @@ class BaseVectorEnv(ABC, gym.Wrapper):
         pass
 
     @abstractmethod
+    def sample(self):
+        """
+        sample action from env
+        :return: action sampled from env
+        """
+        pass
+
+    @abstractmethod
     def render(self, **kwargs):
         """Render all of the environments."""
         pass
@@ -132,6 +140,10 @@ class VectorEnv(BaseVectorEnv):
         self._info = np.stack(self._info)
         return self._obs, self._rew, self._done, self._info
 
+    def sample(self):
+        act = [e.action_space.sample() for e in self.envs]
+        return np.stack(act)
+
     def seed(self, seed=None):
         if np.isscalar(seed):
             seed = [seed + _ for _ in range(self.env_num)]
@@ -162,6 +174,8 @@ def worker(parent, p, env_fn_wrapper):
             cmd, data = p.recv()
             if cmd == 'step':
                 p.send(env.step(data))
+            elif cmd == 'sample':
+                p.send(env.action_space.sample())
             elif cmd == 'reset':
                 p.send(env.reset())
             elif cmd == 'close':
@@ -215,6 +229,12 @@ class SubprocVectorEnv(BaseVectorEnv):
         self._done = np.stack(self._done)
         self._info = np.stack(self._info)
         return self._obs, self._rew, self._done, self._info
+
+    def sample(self):
+        for p in self.parent_remote:
+            p.send(['sample', None])
+        act = np.stack([p.recv() for p in self.parent_remote])
+        return act
 
     def reset(self, id=None):
         if id is None:
