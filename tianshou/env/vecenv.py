@@ -102,9 +102,15 @@ class VectorEnv(BaseVectorEnv):
         explanation.
     """
 
-    def __init__(self, env_fns):
-        super().__init__(env_fns)
-        self.envs = [_() for _ in env_fns]
+    def __init__(self, env):
+        super().__init__(env)
+        if isinstance(env, list):
+            if callable(env[0]):
+                self.envs = [_() for _ in env]
+            else:
+                self.envs = env
+        else:
+            self.envs = [env]
 
     def reset(self, id=None):
         if id is None:

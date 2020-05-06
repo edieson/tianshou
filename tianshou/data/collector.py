@@ -4,7 +4,7 @@ import warnings
 import numpy as np
 
 from tianshou.utils import MovAvg
-from tianshou.env import BaseVectorEnv
+from tianshou.env import BaseVectorEnv, VectorEnv
 from tianshou.data import Batch, ReplayBuffer, ListReplayBuffer
 
 
@@ -70,30 +70,22 @@ class Collector(object):
 
     def __init__(self, policy, env, buffer=None, stat_size=100, **kwargs):
         super().__init__()
-        self.env = env
-        self.env_num = 1
+        if not isinstance(env, BaseVectorEnv):
+            self.env = VectorEnv([env])
+        else:
+            self.env = env
         self.collect_step = 0
         self.collect_episode = 0
         self.collect_time = 0
         self.buffer = buffer
         self.policy = policy
         self.process_fn = policy.process_fn
-        self._multi_env = isinstance(env, BaseVectorEnv)
-        self._multi_buf = False  # True if buf is a list
         # need multiple cache buffers only if storing in one buffer
         self._cached_buf = []
-        if self._multi_env:
-            self.env_num = len(env)
-            if isinstance(self.buffer, list):
-                assert len(self.buffer) == self.env_num, \
-                    'The number of data buffer does not match the number of ' \
-                    'input env.'
-                self._multi_buf = True
-            elif isinstance(self.buffer, ReplayBuffer) or self.buffer is None:
-                self._cached_buf = [
-                    ListReplayBuffer() for _ in range(self.env_num)]
-            else:
-                raise TypeError('The buffer in data collector is invalid!')
+        if isinstance(self.buffer, ReplayBuffer) or self.buffer is None:
+            self._cached_buf = [ListReplayBuffer() for _ in range(self.env.env_num)]
+        else:
+            raise TypeError('The buffer in data collector is invalid!')
         self.stat_size = stat_size
         self.reset()
 
@@ -111,16 +103,12 @@ class Collector(object):
 
     def reset_buffer(self):
         """Reset the main data buffer."""
-        if self._multi_buf:
-            for b in self.buffer:
-                b.reset()
-        else:
-            if self.buffer is not None:
-                self.buffer.reset()
+        if self.buffer is not None:
+            self.buffer.reset()
 
     def get_env_num(self):
         """Return the number of environments the collector has."""
-        return self.env_num
+        return self.env.env_num
 
     def reset_env(self):
         """Reset all of the environment(s)' states and reset all of the cache
@@ -128,11 +116,10 @@ class Collector(object):
         """
         self._obs = self.env.reset()
         self._act = self._rew = self._done = self._info = None
-        if self._multi_env:
-            self.reward = np.zeros(self.env_num)
-            self.length = np.zeros(self.env_num)
-        else:
-            self.reward, self.length = 0, 0
+
+        self.reward = np.zeros(self.env.env_num)
+        self.length = np.zeros(self.env.env_num)
+
         for b in self._cached_buf:
             b.reset()
 
@@ -150,13 +137,6 @@ class Collector(object):
         """Close the environment(s)."""
         if hasattr(self.env, 'close'):
             self.env.close()
-
-    def _make_batch(self, data):
-        """Return [data]."""
-        if isinstance(data, np.ndarray):
-            return data[None]
-        else:
-            return np.array([data])
 
     def _reset_state(self, id):
         """Reset self.state[id]."""
@@ -216,13 +196,10 @@ class Collector(object):
             * ``len`` the mean length over collected episodes.
         """
         warning_count = 0
-        if not self._multi_env:
-            n_episode = np.sum(n_episode)
         start_time = time.time()
-        assert sum([(n_step != 0), (n_episode != 0)]) == 1, \
-            "One and only one collection number specification is permitted!"
+        assert not (n_step and n_episode), "One and only one collection number specification is permitted!"
         cur_step = 0
-        cur_episode = np.zeros(self.env_num) if self._multi_env else 0
+        cur_episode = np.zeros(self.env.env_num)
         reward_sum = 0
         length_sum = 0
         while True:
@@ -231,32 +208,24 @@ class Collector(object):
                     'There are already many steps in an episode. '
                     'You should add a time limitation to your environment!',
                     Warning)
-            if self._multi_env:
-                batch_data = Batch(
-                    obs=self._obs, act=self._act, rew=self._rew,
-                    done=self._done, obs_next=None, info=self._info)
-            else:
-                batch_data = Batch(
-                    obs=self._make_batch(self._obs),
-                    act=self._make_batch(self._act),
-                    rew=self._make_batch(self._rew),
-                    done=self._make_batch(self._done),
-                    obs_next=None,
-                    info=self._make_batch(self._info))
+
+            batch_data = Batch(
+                obs=self._obs, act=self._act, rew=self._rew,
+                done=self._done, obs_next=None, info=self._info
+            )
             with torch.no_grad():
                 result = self.policy(batch_data, self.state)
             self.state = result.state if hasattr(result, 'state') else None
             self._policy = self._to_numpy(result.policy) \
                 if hasattr(result, 'policy') \
-                else [{}] * self.env_num if self._multi_env else {}
+                else [{}] * self.env.env_num
             if isinstance(result.act, torch.Tensor):
                 self._act = self._to_numpy(result.act)
             elif not isinstance(self._act, np.ndarray):
                 self._act = np.array(result.act)
             else:
                 self._act = result.act
-            obs_next, self._rew, self._done, self._info = self.env.step(
-                self._act if self._multi_env else self._act[0])
+            obs_next, self._rew, self._done, self._info = self.env.step(self._act)
             if log_fn is not None:
                 log_fn(self._info)
             if render is not None:
@@ -265,68 +234,41 @@ class Collector(object):
                     time.sleep(render)
             self.length += 1
             self.reward += self._rew
-            if self._multi_env:
-                for i in range(self.env_num):
-                    data = {
-                        'obs': self._obs[i], 'act': self._act[i],
-                        'rew': self._rew[i], 'done': self._done[i],
-                        'obs_next': obs_next[i], 'info': self._info[i],
-                        'policy': self._policy[i]}
+
+            for i in range(self.env.env_num):
+                data = {
+                    'obs': self._obs[i], 'act': self._act[i],
+                    'rew': self._rew[i], 'done': self._done[i],
+                    'obs_next': obs_next[i], 'info': self._info[i],
+                    'policy': self._policy[i]}
+                if self._cached_buf:
+                    warning_count += 1
+                    self._cached_buf[i].add(**data)
+                else:
+                    warning_count += 1
+                    if self.buffer is not None:
+                        self.buffer.add(**data)
+                    cur_step += 1
+                if self._done[i]:
+                    cur_episode[i] += 1
+                    reward_sum += self.reward[i]
+                    length_sum += self.length[i]
                     if self._cached_buf:
-                        warning_count += 1
-                        self._cached_buf[i].add(**data)
-                    elif self._multi_buf:
-                        warning_count += 1
-                        self.buffer[i].add(**data)
-                        cur_step += 1
-                    else:
-                        warning_count += 1
+                        cur_step += len(self._cached_buf[i])
                         if self.buffer is not None:
-                            self.buffer.add(**data)
-                        cur_step += 1
-                    if self._done[i]:
-                        if n_step != 0 or np.isscalar(n_episode) or \
-                                cur_episode[i] < n_episode[i]:
-                            cur_episode[i] += 1
-                            reward_sum += self.reward[i]
-                            length_sum += self.length[i]
-                            if self._cached_buf:
-                                cur_step += len(self._cached_buf[i])
-                                if self.buffer is not None:
-                                    self.buffer.update(self._cached_buf[i])
-                        self.reward[i], self.length[i] = 0, 0
-                        if self._cached_buf:
+                            self.buffer.update(self._cached_buf[i])
                             self._cached_buf[i].reset()
-                        self._reset_state(i)
-                if sum(self._done):
-                    obs_next = self.env.reset(np.where(self._done)[0])
-                if n_episode != 0:
-                    if isinstance(n_episode, list) and \
-                            (cur_episode >= np.array(n_episode)).all() or \
-                            np.isscalar(n_episode) and \
-                            cur_episode.sum() >= n_episode:
-                        break
-            else:
-                if self.buffer is not None:
-                    self.buffer.add(
-                        self._obs, self._act[0], self._rew,
-                        self._done, obs_next, self._info, self._policy)
-                cur_step += 1
-                if self._done:
-                    cur_episode += 1
-                    reward_sum += self.reward
-                    length_sum += self.length
-                    self.reward, self.length = 0, 0
-                    self.state = None
-                    obs_next = self.env.reset()
-                if n_episode != 0 and cur_episode >= n_episode:
+                    self.reward[i], self.length[i] = 0, 0
+                    self._reset_state(i)
+            if sum(self._done):
+                obs_next = self.env.reset(np.where(self._done)[0])
+            self._obs = obs_next
+            if n_episode:
+                if np.sum(cur_episode) >= n_episode:
                     break
             if n_step != 0 and cur_step >= n_step:
                 break
-            self._obs = obs_next
-        self._obs = obs_next
-        if self._multi_env:
-            cur_episode = sum(cur_episode)
+        cur_episode = sum(cur_episode)
         duration = max(time.time() - start_time, 1e-9)
         self.step_speed.add(cur_step / duration)
         self.episode_speed.add(cur_episode / duration)
@@ -355,22 +297,6 @@ class Collector(object):
             the buffer, otherwise it will extract the data with the given
             batch_size.
         """
-        if self._multi_buf:
-            if batch_size > 0:
-                lens = [len(b) for b in self.buffer]
-                total = sum(lens)
-                batch_index = np.random.choice(
-                    total, batch_size, p=np.array(lens) / total)
-            else:
-                batch_index = np.array([])
-            batch_data = Batch()
-            for i, b in enumerate(self.buffer):
-                cur_batch = (batch_index == i).sum()
-                if batch_size and cur_batch or batch_size <= 0:
-                    batch, indice = b.sample(cur_batch)
-                    batch = self.process_fn(batch, b, indice)
-                    batch_data.append(batch)
-        else:
-            batch_data, indice = self.buffer.sample(batch_size)
-            batch_data = self.process_fn(batch_data, self.buffer, indice)
+        batch_data, indice = self.buffer.sample(batch_size)
+        batch_data = self.process_fn(batch_data, self.buffer, indice)
         return batch_data

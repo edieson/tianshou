@@ -35,7 +35,7 @@ class Logger(object):
         self.writer = writer
 
     def log(self, info):
-        self.writer.add_scalar('key', info['key'], global_step=self.cnt)
+        self.writer.add_scalar('key', info[0]['key'], global_step=self.cnt)
         self.cnt += 1
 
 
@@ -67,15 +67,6 @@ def test_collector():
     assert equal(c1.buffer.obs[11:21], [0, 1, 2, 3, 4, 0, 1, 0, 1, 2])
     assert equal(c1.buffer[11:21].obs_next, [1, 2, 3, 4, 5, 1, 2, 1, 2, 3])
     c2 = Collector(policy, venv, ReplayBuffer(size=100, ignore_obs_next=False))
-    c2.collect(n_episode=[1, 2, 2, 2])
-    assert equal(c2.buffer.obs_next[:26], [
-        1, 2, 1, 2, 3, 1, 2, 3, 4, 1, 2, 3, 4, 5,
-        1, 2, 3, 1, 2, 3, 4, 1, 2, 3, 4, 5])
-    c2.reset_env()
-    c2.collect(n_episode=[2, 2, 2, 2])
-    assert equal(c2.buffer.obs_next[26:54], [
-        1, 2, 1, 2, 3, 1, 2, 1, 2, 3, 4, 1, 2, 3, 4, 5,
-        1, 2, 3, 1, 2, 3, 4, 1, 2, 3, 4, 5])
 
 
 def test_collector_with_dict_state():
@@ -93,16 +84,8 @@ def test_collector_with_dict_state():
     envs = VectorEnv(env_fns)
     c1 = Collector(policy, envs, ReplayBuffer(size=100))
     c1.collect(n_step=10)
-    c1.collect(n_episode=[2, 1, 1, 2])
-    batch = c1.sample(10)
-    print(batch)
-    c0.buffer.update(c1.buffer)
-    assert equal(c0.buffer[:len(c0.buffer)].obs.index, [
-        0., 1., 2., 3., 4., 0., 1., 2., 3., 4., 0., 1., 2., 3., 4., 0., 1.,
-        0., 1., 2., 0., 1., 0., 1., 2., 3., 0., 1., 2., 3., 4., 0., 1., 0.,
-        1., 2., 0., 1., 0., 1., 2., 3., 0., 1., 2., 3., 4.])
     c2 = Collector(policy, envs, ReplayBuffer(size=100, stack_num=4))
-    c2.collect(n_episode=[0, 0, 0, 10])
+    c2.collect(n_episode=10)
     batch = c2.sample(10)
     print(batch['obs_next']['index'])
 

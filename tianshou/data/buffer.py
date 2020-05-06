@@ -181,8 +181,7 @@ class ReplayBuffer(object):
     def add(self, obs, act, rew, done, obs_next=None, info={}, policy={},
             **kwargs):
         """Add a batch of data into replay buffer."""
-        assert isinstance(info, dict), \
-            'You should return a dict in the last argument of env.step().'
+        assert isinstance(info, dict), 'You should return a dict in the last argument of env.step().'
         self._add_to_buffer('obs', obs)
         self._add_to_buffer('act', act)
         self._add_to_buffer('rew', rew)
@@ -347,8 +346,8 @@ class PrioritizedReplayBuffer(ReplayBuffer):
     def add(self, obs, act, rew, done, obs_next=0, info={}, policy={},
             weight=1.0):
         """Add a batch of data into replay buffer."""
-        self._weight_sum += np.abs(weight)**self._alpha - \
-            self.weight[self._index]
+        self._weight_sum += np.abs(weight) ** self._alpha - \
+                            self.weight[self._index]
         # we have to sacrifice some convenience for speed :(
         self._add_to_buffer('weight', np.abs(weight) ** self._alpha)
         super().add(obs, act, rew, done, obs_next, info, policy)
@@ -399,7 +398,7 @@ class PrioritizedReplayBuffer(ReplayBuffer):
         :param np.ndarray new_weight: new priority weight you wangt to update
         """
         self._weight_sum += np.power(np.abs(new_weight), self._alpha).sum() \
-            - self.weight[indice].sum()
+                            - self.weight[indice].sum()
         self.weight[indice] = np.power(np.abs(new_weight), self._alpha)
 
     def __getitem__(self, index):
