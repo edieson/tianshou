@@ -92,7 +92,7 @@ def get_args():
     parser.add_argument('--buffer-size', type=int, default=20000)
     parser.add_argument('--lr', type=float, default=3e-4)
     parser.add_argument('--gamma', type=float, default=0.9)
-    parser.add_argument('--epoch', type=int, default=10)
+    parser.add_argument('--epoch', type=int, default=15)
     parser.add_argument('--step-per-epoch', type=int, default=1000)
     parser.add_argument('--collect-per-step', type=int, default=10)
     parser.add_argument('--repeat-per-collect', type=int, default=2)
@@ -164,7 +164,7 @@ def test_pg(args=get_args()):
         env = gym.make(args.task)
         collector = Collector(policy, env)
         result = collector.collect(n_episode=1, render=args.render)
-        print(f'Final reward: {result["rew"]}, length: {result["len"]}')
+        print(f'Final reward: {result["ep/reward"]}, length: {result["ep/len"]}')
         collector.close()
 
 

@@ -280,8 +280,8 @@ class Collector(object):
             'n/st': cur_step,
             'v/st': self.step_speed.get(),
             'v/ep': self.episode_speed.get(),
-            'rew': reward_sum / cur_episode,
-            'len': length_sum / cur_episode,
+            'ep/reward': reward_sum / cur_episode,
+            'ep/len': length_sum / cur_episode,
         }
 
     def sample(self, batch_size):

@@ -6,7 +6,7 @@ import argparse
 import numpy as np
 from torch.utils.tensorboard import SummaryWriter
 
-from tianshou.env import VectorEnv
+from tianshou.env import VectorEnv, SubprocVectorEnv
 from tianshou.trainer import offpolicy_trainer
 from tianshou.data import Collector, ReplayBuffer
 from tianshou.policy import SACPolicy, ImitationPolicy
@@ -28,13 +28,13 @@ def get_args():
     parser.add_argument('--gamma', type=float, default=0.99)
     parser.add_argument('--tau', type=float, default=0.005)
     parser.add_argument('--alpha', type=float, default=0.2)
-    parser.add_argument('--epoch', type=int, default=20)
+    parser.add_argument('--epoch', type=int, default=2000)
     parser.add_argument('--step-per-epoch', type=int, default=2400)
     parser.add_argument('--collect-per-step', type=int, default=10)
     parser.add_argument('--batch-size', type=int, default=128)
     parser.add_argument('--layer-num', type=int, default=1)
     parser.add_argument('--training-num', type=int, default=8)
-    parser.add_argument('--test-num', type=int, default=100)
+    parser.add_argument('--test-num', type=int, default=10)
     parser.add_argument('--logdir', type=str, default='log')
     parser.add_argument('--render', type=float, default=0.)
     parser.add_argument('--rew-norm', type=bool, default=True)
@@ -44,6 +44,23 @@ def get_args():
     args = parser.parse_known_args()[0]
     return args
 
+from gym.wrappers import TransformReward
+class BipedalWrapper(gym.Wrapper):
+    def __init__(self, env, action_repeat=3):
+        super(BipedalWrapper, self).__init__(env)
+        self.action_repeat = action_repeat
+
+    def step(self, action):
+        act_noise = 0.3 * (np.random.random(action.shape) * 2 - 1)
+        action += act_noise
+        r = 0.0
+        obs_, reward_, done_, info_ = self.env.step(action)
+        for i in range(self.action_repeat - 1):
+            obs_, reward_, done_, info_ = self.env.step(action)
+            r = r + reward_
+            if done_:
+                return obs_, 0.0, done_, info_
+        return obs_, r, done_, info_
 
 def test_sac_with_il(args=get_args()):
     torch.set_num_threads(1)  # we just need only one thread for NN
@@ -55,11 +72,12 @@ def test_sac_with_il(args=get_args()):
     args.max_action = env.action_space.high[0]
     # you can also use tianshou.env.SubprocVectorEnv
     # train_envs = gym.make(args.task)
-    train_envs = VectorEnv(
-        [lambda: gym.make(args.task) for _ in range(args.training_num)])
+    train_envs = SubprocVectorEnv([
+        lambda: TransformReward(BipedalWrapper(gym.make(args.task)), lambda reward: 5 * reward)
+        for _ in range(args.training_num)
+    ])
     # test_envs = gym.make(args.task)
-    test_envs = VectorEnv(
-        [lambda: gym.make(args.task) for _ in range(args.test_num)])
+    test_envs = SubprocVectorEnv([lambda: gym.make(args.task) for _ in range(args.test_num)])
     # seed
     np.random.seed(args.seed)
     torch.manual_seed(args.seed)
@@ -80,13 +98,13 @@ def test_sac_with_il(args=get_args()):
     ).to(args.device)
     critic2_optim = torch.optim.Adam(critic2.parameters(), lr=args.critic_lr)
     policy = SACPolicy(
-        actor, actor_optim, critic1, critic1_optim, critic2, critic2_optim,
+        actor, actor_optim, critic1, critic1_optim, critic2, critic2_optim, env.action_space,
         args.tau, args.gamma, args.alpha,
-        [env.action_space.low[0], env.action_space.high[0]],
         reward_normalization=args.rew_norm, ignore_done=True)
     # collector
     train_collector = Collector(
         policy, train_envs, ReplayBuffer(args.buffer_size))
+    train_collector.collect(10000, sampling=True)
     test_collector = Collector(policy, test_envs)
     # train_collector.collect(n_step=args.buffer_size)
     # log
@@ -105,14 +123,14 @@ def test_sac_with_il(args=get_args()):
         args.step_per_epoch, args.collect_per_step, args.test_num,
         args.batch_size, stop_fn=stop_fn, save_fn=save_fn, writer=writer)
     assert stop_fn(result['best_reward'])
-    test_collector.close()
+    # test_collector.close()
     if __name__ == '__main__':
         pprint.pprint(result)
         # Let's watch its performance!
         env = gym.make(args.task)
         collector = Collector(policy, env)
         result = collector.collect(n_episode=1, render=args.render)
-        print(f'Final reward: {result["rew"]}, length: {result["len"]}')
+        print(f'Final reward: {result["ep/reward"]}, length: {result["ep/len"]}')
         collector.close()
 
     # here we define an imitation collector with a trivial policy
@@ -137,7 +155,7 @@ def test_sac_with_il(args=get_args()):
         env = gym.make(args.task)
         collector = Collector(il_policy, env)
         result = collector.collect(n_episode=1, render=args.render)
-        print(f'Final reward: {result["rew"]}, length: {result["len"]}')
+        print(f'Final reward: {result["ep/reward"]}, length: {result["ep/len"]}')
         collector.close()
 
 

@@ -67,8 +67,9 @@ def test_collector():
     assert equal(c1.buffer.obs[11:21], [0, 1, 2, 3, 4, 0, 1, 0, 1, 2])
     assert equal(c1.buffer[11:21].obs_next, [1, 2, 3, 4, 5, 1, 2, 1, 2, 3])
     c2 = Collector(policy, gym.make('CartPole-v1'), ReplayBuffer(size=20000, ignore_obs_next=False))
-    c2.collect(n_step=10000, sampling=True)
+    r = c2.collect(n_step=10000, sampling=True)
     assert len(c2.buffer) > 10000
+    print(r)
 def test_collector_with_dict_state():
     env = MyTestEnv(size=5, sleep=0, dict_state=True)
     policy = MyPolicy(dict_state=True)

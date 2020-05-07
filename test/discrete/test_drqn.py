@@ -110,7 +110,7 @@ def test_drqn(args=get_args()):
         env = gym.make(args.task)
         collector = Collector(policy, env)
         result = collector.collect(n_episode=1, render=args.render)
-        print(f'Final reward: {result["rew"]}, length: {result["len"]}')
+        print(f'Final reward: {result["ep/reward"]}, length: {result["ep/len"]}')
         collector.close()
 
 
