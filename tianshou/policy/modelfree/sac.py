@@ -41,11 +41,11 @@ class SACPolicy(DDPGPolicy):
     """
 
     def __init__(self, actor, actor_optim, critic1, critic1_optim,
-                 critic2, critic2_optim, tau=0.005, gamma=0.99,
-                 alpha=0.2, action_range=None, reward_normalization=False,
+                 critic2, critic2_optim, action_space, tau=0.005, gamma=0.99,
+                 alpha=0.2, reward_normalization=False,
                  ignore_done=False, **kwargs):
         super().__init__(None, None, None, None, tau, gamma, 0,
-                         action_range, reward_normalization, ignore_done,
+                         [action_space.low[0], action_space.high[0]], reward_normalization, ignore_done,
                          **kwargs)
         self.actor, self.actor_optim = actor, actor_optim
         self.critic1, self.critic1_old = critic1, deepcopy(critic1)
@@ -55,6 +55,10 @@ class SACPolicy(DDPGPolicy):
         self.critic2_old.eval()
         self.critic2_optim = critic2_optim
         self._alpha = alpha
+        self.__eps = np.finfo(np.float32).eps.item()
+        self.target_entropy = -torch.prod(torch.Tensor(action_space.shape).to(actor.device)).item()
+        self.log_alpha = torch.nn.Parameter(torch.tensor(np.log(alpha), device=actor.device), requires_grad=True)
+        self.alpha_optim = torch.optim.Adam([self.log_alpha], lr=3e-4)
         self.__eps = np.finfo(np.float32).eps.item()
 
     def train(self):
@@ -129,9 +133,15 @@ class SACPolicy(DDPGPolicy):
         self.actor_optim.zero_grad()
         actor_loss.backward()
         self.actor_optim.step()
+        alpha_loss = -(self.log_alpha * (obs_result.log_prob + self.target_entropy).detach()).mean()
+        self.alpha_optim.zero_grad()
+        alpha_loss.backward()
+        self.alpha_optim.step()
+        self._alpha = self.log_alpha.exp()
         self.sync_weight()
         return {
             'loss/actor': actor_loss.item(),
             'loss/critic1': critic1_loss.item(),
             'loss/critic2': critic2_loss.item(),
+            'loss/alpha_loss': alpha_loss.item(),
         }
