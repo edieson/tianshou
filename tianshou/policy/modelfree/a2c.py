@@ -1,7 +1,7 @@
-import torch
 import numpy as np
-from torch import nn
+import torch
 import torch.nn.functional as F
+from torch import nn
 
 from tianshou.data import Batch
 from tianshou.policy import PGPolicy
@@ -75,7 +75,7 @@ class A2CPolicy(PGPolicy):
             Please refer to :meth:`~tianshou.policy.BasePolicy.forward` for
             more detailed explanation.
         """
-        logits, h = self.actor(batch.obs, state=state, info=batch.info)
+        logits, h = self.actor(batch.obs, state=state)
         if isinstance(logits, tuple):
             dist = self.dist_fn(*logits)
         else:
@@ -97,7 +97,7 @@ class A2CPolicy(PGPolicy):
                 a = torch.tensor(b.act, device=v.device)
                 r = torch.tensor(b.returns, device=v.device)
                 a_loss = -(dist.log_prob(a) * (r - v).detach()).mean()
-                vf_loss = F.mse_loss(r[:, None], v)
+                vf_loss = F.mse_loss(r, v)
                 ent_loss = dist.entropy().mean()
                 loss = a_loss + self._w_vf * vf_loss - self._w_ent * ent_loss
                 loss.backward()

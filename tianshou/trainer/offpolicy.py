@@ -1,15 +1,28 @@
+import collections
 import time
+
+import numpy as np
 import tqdm
 
-from tianshou.utils import tqdm_config, MovAvg
 from tianshou.trainer import test_episode, gather_info
+from tianshou.utils import tqdm_config
 
 
-def offpolicy_trainer(policy, train_collector, test_collector, max_epoch,
-                      step_per_epoch, collect_per_step, episode_per_test,
+def offpolicy_trainer(policy,
+                      train_collector,
+                      test_collector,
+                      max_epoch,
+                      step_per_epoch,
+                      collect_per_step,
+                      episode_per_test,
                       batch_size,
-                      train_fn=None, stop_fn=None, save_fn=None,
-                      log_fn=None, writer=None, log_interval=10, verbose=True,
+                      train_fn=None,
+                      stop_fn=None,
+                      save_fn=None,
+                      test_in_train=False,
+                      writer=None,
+                      log_interval=10,
+                      verbose=True,
                       **kwargs):
     """A wrapper for off-policy trainer procedure.
 
@@ -47,19 +60,16 @@ def offpolicy_trainer(policy, train_collector, test_collector, max_epoch,
     """
     global_step = 0
     best_epoch, best_reward = -1, -1
-    stat = {}
+    stat = collections.defaultdict(lambda: collections.deque([], maxlen=5))
     start_time = time.time()
-    test_in_train = train_collector.policy == policy
     for epoch in range(1, 1 + max_epoch):
         # train
         policy.train()
         if train_fn:
             train_fn(epoch)
-        with tqdm.tqdm(total=step_per_epoch, desc=f'Epoch #{epoch}',
-                       **tqdm_config) as t:
+        with tqdm.tqdm(total=step_per_epoch, desc=f'Epoch #{epoch}', **tqdm_config) as t:
             while t.n < t.total:
-                result = train_collector.collect(n_step=collect_per_step,
-                                                 log_fn=log_fn)
+                result = train_collector.collect(n_step=collect_per_step)
                 data = {}
                 if test_in_train and stop_fn and stop_fn(result['ep/reward']):
                     test_result = test_episode(policy, test_collector, episode_per_test)
@@ -76,22 +86,22 @@ def offpolicy_trainer(policy, train_collector, test_collector, max_epoch,
                         policy.train()
                         if train_fn:
                             train_fn(epoch)
-                for i in range(min(
-                        result['n/st'] // collect_per_step, t.total - t.n)):
+                for i in range(min(result['n/st'] // collect_per_step, t.total - t.n)):
                     global_step += 1
-                    losses = policy.learn(train_collector.sample(batch_size))
+                    batch = policy.state_encode(train_collector.sample(batch_size))
+                    losses = policy.learn(batch)
                     for k in result.keys():
                         if not k[0] in ['v', 'n']:
                             data[k] = f'{result[k]:.1f}'
-                        if writer and global_step % log_interval == 0:
-                            writer.add_scalar(k, result[k], global_step=global_step)
                     for k in losses.keys():
-                        if stat.get(k) is None:
-                            stat[k] = MovAvg()
-                        stat[k].add(losses[k])
-                        data[k] = f'{stat[k].get():.1f}'
-                        if writer and global_step % log_interval == 0:
-                            writer.add_scalar(k, stat[k].get(), global_step=global_step)
+                        stat[k].append(losses[k])
+                        if not k[0] in ['g']:
+                            data[k] = f'{np.nanmean(stat[k]):.1f}'
+                    if writer and global_step % log_interval == 0:
+                        for k in result.keys():
+                            writer.add_scalar(k, result[k], global_step=global_step)
+                        for k in losses.keys():
+                            writer.add_scalar(k, np.nanmean(stat[k]), global_step=global_step)
                     t.update(1)
                     t.set_postfix(**data)
             if t.n <= t.total:

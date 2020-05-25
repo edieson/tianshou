@@ -1,5 +1,6 @@
-import torch
 from copy import deepcopy
+
+import torch
 import torch.nn.functional as F
 
 from tianshou.policy import DDPGPolicy
@@ -47,11 +48,9 @@ class TD3Policy(DDPGPolicy):
     def __init__(self, actor, actor_optim, critic1, critic1_optim,
                  critic2, critic2_optim, tau=0.005, gamma=0.99,
                  exploration_noise=0.1, policy_noise=0.2, update_actor_freq=2,
-                 noise_clip=0.5, action_range=None,
-                 reward_normalization=False, ignore_done=False, **kwargs):
+                 noise_clip=0.5, action_range=None, **kwargs):
         super().__init__(actor, actor_optim, None, None, tau, gamma,
-                         exploration_noise, action_range, reward_normalization,
-                         ignore_done, **kwargs)
+                         exploration_noise, action_range, **kwargs)
         self.critic1, self.critic1_old = critic1, deepcopy(critic1)
         self.critic1_old.eval()
         self.critic1_optim = critic1_optim
@@ -99,9 +98,9 @@ class TD3Policy(DDPGPolicy):
                 self.critic1_old(batch.obs_next, a_),
                 self.critic2_old(batch.obs_next, a_))
             rew = torch.tensor(batch.rew,
-                               dtype=torch.float, device=dev)[:, None]
+                               dtype=torch.float, device=dev)
             done = torch.tensor(batch.done,
-                                dtype=torch.float, device=dev)[:, None]
+                                dtype=torch.float, device=dev)
             target_q = (rew + (1. - done) * self._gamma * target_q)
         # critic 1
         current_q1 = self.critic1(batch.obs, batch.act)

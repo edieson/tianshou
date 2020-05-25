@@ -1,5 +1,5 @@
-import torch
 import numpy as np
+import torch
 
 from tianshou.data import Batch
 from tianshou.policy import BasePolicy
@@ -61,7 +61,7 @@ class PGPolicy(BasePolicy):
             Please refer to :meth:`~tianshou.policy.BasePolicy.forward` for
             more detailed explanation.
         """
-        logits, h = self.model(batch.obs, state=state, info=batch.info)
+        logits, h = self.model(batch.obs, state=state)
         if isinstance(logits, tuple):
             dist = self.dist_fn(*logits)
         else:

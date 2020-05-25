@@ -1,5 +1,5 @@
-import torch
 import numpy as np
+import torch
 from torch import nn
 
 from tianshou.data import Batch
@@ -23,7 +23,7 @@ class PPOPolicy(PGPolicy):
     :param float vf_coef: weight for value loss, defaults to 0.5.
     :param float ent_coef: weight for entropy loss, defaults to 0.01.
     :param action_range: the action range (minimum, maximum).
-    :type action_range: [float, float]
+    :type action_range: (float, float)
     :param float gae_lambda: in [0, 1], param for Generalized Advantage
         Estimation, defaults to 0.95.
     :param float dual_clip: a parameter c mentioned in arXiv:1912.09729 Equ. 5,
@@ -95,7 +95,7 @@ class PPOPolicy(PGPolicy):
             Please refer to :meth:`~tianshou.policy.BasePolicy.forward` for
             more detailed explanation.
         """
-        logits, h = self.actor(batch.obs, state=state, info=batch.info)
+        logits, h = self.actor(batch.obs, state=state)
         if isinstance(logits, tuple):
             dist = self.dist_fn(*logits)
         else:
@@ -160,9 +160,10 @@ class PPOPolicy(PGPolicy):
                 losses.append(loss.item())
                 self.optim.zero_grad()
                 loss.backward()
-                nn.utils.clip_grad_norm_(list(
-                    self.actor.parameters()) + list(self.critic.parameters()),
-                    self._max_grad_norm)
+                nn.utils.clip_grad_norm_(
+                    list(self.actor.parameters()) + list(self.critic.parameters()),
+                    self._max_grad_norm
+                )
                 self.optim.step()
         return {
             'loss': losses,

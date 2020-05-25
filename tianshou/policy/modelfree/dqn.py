@@ -1,10 +1,11 @@
-import torch
-import numpy as np
 from copy import deepcopy
+
+import numpy as np
+import torch
 import torch.nn.functional as F
 
-from tianshou.policy import BasePolicy
 from tianshou.data import Batch, PrioritizedReplayBuffer
+from tianshou.policy import BasePolicy
 
 
 class DQNPolicy(BasePolicy):
@@ -13,7 +14,7 @@ class DQNPolicy(BasePolicy):
     :param torch.nn.Module model: a model following the rules in
         :class:`~tianshou.policy.BasePolicy`. (s -> logits)
     :param torch.optim.Optimizer optim: a torch.optim for optimizing the model.
-    :param float discount_factor: in [0, 1].
+    :param float gamma: in [0, 1].
     :param int estimation_step: greater than 1, the number of steps to look
         ahead.
     :param int target_update_freq: the target network update frequency (``0``
@@ -25,14 +26,16 @@ class DQNPolicy(BasePolicy):
         explanation.
     """
 
-    def __init__(self, model, optim, discount_factor=0.99,
-                 estimation_step=1, target_update_freq=0, **kwargs):
+    def __init__(self, model, optim, gamma=0.99,
+                 estimation_step=1, target_update_freq=0, epsilon_decay=0.99, **kwargs):
         super().__init__(**kwargs)
         self.model = model
         self.optim = optim
-        self.eps = 0
-        assert 0 <= discount_factor <= 1, 'discount_factor should in [0, 1]'
-        self._gamma = discount_factor
+        self.eps = 1
+        self.eps_decay = epsilon_decay
+        self.min_eps = 0.1
+        assert 0 <= gamma <= 1, 'discount_factor should in [0, 1]'
+        self._gamma = gamma
         assert estimation_step > 0, 'estimation_step should greater than 0'
         self._n_step = estimation_step
         self._target = target_update_freq > 0
@@ -77,21 +80,21 @@ class DQNPolicy(BasePolicy):
         gammas = np.zeros_like(indice) + self._n_step
         for n in range(self._n_step - 1, -1, -1):
             now = (indice + n) % len(buffer)
-            gammas[buffer.done[now] > 0] = n
-            returns[buffer.done[now] > 0] = 0
-            returns = buffer.rew[now] + self._gamma * returns
+            gammas[[buffer[i].done > 0 for i in now]] = n
+            returns[[buffer[i].done > 0 for i in now]] = 0
+            returns = np.array([buffer[i].reward for i in now]) + self._gamma * returns
         terminal = (indice + self._n_step - 1) % len(buffer)
-        terminal_data = buffer[terminal]
+        terminal_batch = buffer._encode_sample(terminal)
+
         if self._target:
             # target_Q = Q_old(s_, argmax(Q_new(s_, *)))
-            a = self(terminal_data, input='obs_next', eps=0).act
-            target_q = self(
-                terminal_data, model='model_old', input='obs_next').logits
+            a = self(terminal_batch, input='obs_next', eps=0).act
+            target_q = self(terminal_batch, model='model_old', input='obs_next').logits
             if isinstance(target_q, torch.Tensor):
                 target_q = target_q.detach().cpu().numpy()
             target_q = target_q[np.arange(len(a)), a]
         else:
-            target_q = self(terminal_data, input='obs_next').logits
+            target_q = self(terminal_batch, input='obs_next').logits
             if isinstance(target_q, torch.Tensor):
                 target_q = target_q.detach().cpu().numpy()
             target_q = target_q.max(axis=1)
@@ -105,9 +108,8 @@ class DQNPolicy(BasePolicy):
             if isinstance(r, np.ndarray):
                 r = torch.tensor(r, device=q.device, dtype=q.dtype)
             td = r - q
-            buffer.update_weight(indice, td.detach().cpu().numpy())
-            impt_weight = torch.tensor(batch.impt_weight,
-                                       device=q.device, dtype=torch.float)
+            buffer.update_priorities(indice, td.detach().cpu().numpy())
+            impt_weight = torch.tensor(batch.impt_weight, device=q.device, dtype=torch.float)
             loss = (td.pow(2) * impt_weight).mean()
             if not hasattr(batch, 'loss'):
                 batch.loss = loss
@@ -134,11 +136,12 @@ class DQNPolicy(BasePolicy):
         """
         model = getattr(self, model)
         obs = getattr(batch, input)
-        q, h = model(obs, state=state, info=batch.info)
+        q, h = model(obs, state=state)
         act = q.max(dim=1)[1].detach().cpu().numpy()
         # add eps to act
         if eps is None:
-            eps = self.eps
+            self.eps *= self.eps_decay
+            eps = max(self.eps, self.min_eps)
         for i in range(len(q)):
             if np.random.rand() < eps:
                 act[i] = np.random.randint(q.shape[1])

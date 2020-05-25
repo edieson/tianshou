@@ -1,10 +1,13 @@
-import torch
-import numpy as np
 from copy import deepcopy
+
+import numpy as np
+import torch
 import torch.nn.functional as F
 
 from tianshou.data import Batch
 from tianshou.policy import BasePolicy
+
+
 # from tianshou.exploration import OUNoise
 
 
@@ -84,15 +87,14 @@ class DDPGPolicy(BasePolicy):
         """Soft-update the weight for the target network."""
         for o, n in zip(self.actor_old.parameters(), self.actor.parameters()):
             o.data.copy_(o.data * (1 - self._tau) + n.data * self._tau)
-        for o, n in zip(
-                self.critic_old.parameters(), self.critic.parameters()):
+        for o, n in zip(self.critic_old.parameters(), self.critic.parameters()):
             o.data.copy_(o.data * (1 - self._tau) + n.data * self._tau)
 
     def process_fn(self, batch, buffer, indice):
         if self._rew_norm:
-            bfr = buffer.rew[:min(len(buffer), 1000)]  # avoid large buffer
+            bfr = np.array([b.reward for b in buffer[:min(len(buffer), 1000)]])  # avoid large buffer
             mean, std = bfr.mean(), bfr.std()
-            if std > self.__eps:
+            if std > 0.1:
                 batch.rew = (batch.rew - mean) / std
         if self._rm_done:
             batch.done = batch.done * 0.
@@ -116,7 +118,7 @@ class DDPGPolicy(BasePolicy):
         """
         model = getattr(self, model)
         obs = getattr(batch, input)
-        logits, h = model(obs, state=state, info=batch.info)
+        logits, h = model(obs, state=state)
         logits += self._action_bias
         if eps is None:
             eps = self._eps
@@ -134,10 +136,8 @@ class DDPGPolicy(BasePolicy):
             target_q = self.critic_old(batch.obs_next, self(
                 batch, model='actor_old', input='obs_next', eps=0).act)
             dev = target_q.device
-            rew = torch.tensor(batch.rew,
-                               dtype=torch.float, device=dev)[:, None]
-            done = torch.tensor(batch.done,
-                                dtype=torch.float, device=dev)[:, None]
+            rew = torch.tensor(batch.rew, dtype=torch.float, device=dev)
+            done = torch.tensor(batch.done, dtype=torch.float, device=dev)
             target_q = (rew + (1. - done) * self._gamma * target_q)
         current_q = self.critic(batch.obs, batch.act)
         critic_loss = F.mse_loss(current_q, target_q)

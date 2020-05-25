@@ -28,7 +28,7 @@ class ImitationPolicy(BasePolicy):
         self.mode = mode
 
     def forward(self, batch, state=None):
-        logits, h = self.model(batch.obs, state=state, info=batch.info)
+        logits, h = self.model(batch.obs, state=state)
         if self.mode == 'discrete':
             a = logits.max(dim=1)[1]
         else:

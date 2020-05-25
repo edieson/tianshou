@@ -1,10 +1,12 @@
 import torch
-import numpy as np
-from copy import deepcopy
 import torch.nn.functional as F
+import torch.nn.utils as nn_utils
 
 from tianshou.data import Batch
 from tianshou.policy import DDPGPolicy
+from tianshou.utils import grad_statistics
+
+GRAD_L2_CLIP = 0.1
 
 
 class SACPolicy(DDPGPolicy):
@@ -40,99 +42,88 @@ class SACPolicy(DDPGPolicy):
         explanation.
     """
 
-    def __init__(self, actor, actor_optim, critic1, critic1_optim,
-                 critic2, critic2_optim, action_space, tau=0.005, gamma=0.99,
-                 alpha=0.2, reward_normalization=False,
-                 ignore_done=False, **kwargs):
+    def __init__(self, actor, actor_optim, critic, critic_optim,
+                 critic_target, action_space, device, tau=0.005, gamma=0.99,
+                 alpha=0.2, **kwargs):
         super().__init__(None, None, None, None, tau, gamma, 0,
-                         [action_space.low[0], action_space.high[0]], reward_normalization, ignore_done,
+                         [action_space.low[0], action_space.high[0]],
                          **kwargs)
         self.actor, self.actor_optim = actor, actor_optim
-        self.critic1, self.critic1_old = critic1, deepcopy(critic1)
-        self.critic1_old.eval()
-        self.critic1_optim = critic1_optim
-        self.critic2, self.critic2_old = critic2, deepcopy(critic2)
-        self.critic2_old.eval()
-        self.critic2_optim = critic2_optim
+        self.critic, self.critic_target = critic, critic_target
+        self.critic_target.load_state_dict(self.critic.state_dict())
+        self.critic_optim = critic_optim
+        self.critic_target.eval()
         self._alpha = alpha
-        self.__eps = np.finfo(np.float32).eps.item()
-        self.target_entropy = -torch.prod(torch.Tensor(action_space.shape).to(actor.device)).item()
-        self.log_alpha = torch.nn.Parameter(torch.tensor(np.log(alpha), device=actor.device), requires_grad=True)
+        self.device = device
+        # self._epsilon = np.finfo(np.float32).eps.item()
+        self.target_entropy = -torch.prod(torch.Tensor(action_space.shape).to(actor.device))
+        self.log_alpha = torch.zeros(1, device=actor.device, requires_grad=True)
         self.alpha_optim = torch.optim.Adam([self.log_alpha], lr=3e-4)
-        self.__eps = np.finfo(np.float32).eps.item()
+        self._epsilon = 1e-6
 
     def train(self):
         self.training = True
         self.actor.train()
-        self.critic1.train()
-        self.critic2.train()
+        self.critic.train()
 
     def eval(self):
         self.training = False
         self.actor.eval()
-        self.critic1.eval()
-        self.critic2.eval()
+        self.critic.eval()
 
     def sync_weight(self):
-        for o, n in zip(
-                self.critic1_old.parameters(), self.critic1.parameters()):
-            o.data.copy_(o.data * (1 - self._tau) + n.data * self._tau)
-        for o, n in zip(
-                self.critic2_old.parameters(), self.critic2.parameters()):
+        for o, n in zip(self.critic_target.parameters(), self.critic.parameters()):
             o.data.copy_(o.data * (1 - self._tau) + n.data * self._tau)
 
     def forward(self, batch, state=None, input='obs', **kwargs):
         obs = getattr(batch, input)
-        logits, h = self.actor(obs, state=state, info=batch.info)
+        logits, h = self.actor(obs, state=state)
         assert isinstance(logits, tuple)
         dist = torch.distributions.Normal(*logits)
         x = dist.rsample()
         y = torch.tanh(x)
         act = y * self._action_scale + self._action_bias
-        log_prob = dist.log_prob(x) - torch.log(
-            self._action_scale * (1 - y.pow(2)) + self.__eps)
-        log_prob = torch.unsqueeze(torch.sum(log_prob, 1), 1)
-        act = act.clamp(self._range[0], self._range[1])
-        return Batch(
-            logits=logits, act=act, state=h, dist=dist, log_prob=log_prob)
+        log_prob = dist.log_prob(x) - torch.log(self._action_scale * (1 - y.pow(2)) + self._epsilon)
+        log_prob = log_prob.sum(1, keepdim=True)
+        # act = act.clamp(self._range[0], self._range[1])
+        return Batch(logits=logits, act=act, state=h, log_prob=log_prob)
 
     def learn(self, batch, **kwargs):
+        rew = torch.tensor(batch.rew, dtype=torch.float, device=self.device)
+        done = torch.tensor(batch.done, dtype=torch.float, device=self.device)
         with torch.no_grad():
             obs_next_result = self(batch, input='obs_next')
-            a_ = obs_next_result.act
-            dev = a_.device
-            batch.act = torch.tensor(batch.act, dtype=torch.float, device=dev)
-            target_q = torch.min(
-                self.critic1_old(batch.obs_next, a_),
-                self.critic2_old(batch.obs_next, a_),
-            ) - self._alpha * obs_next_result.log_prob
-            rew = torch.tensor(batch.rew,
-                               dtype=torch.float, device=dev)[:, None]
-            done = torch.tensor(batch.done,
-                                dtype=torch.float, device=dev)[:, None]
+            q1_next, q2_next = self.critic_target(batch.obs_next, obs_next_result.act)
+            target_q = torch.min(q1_next, q2_next) - self._alpha * obs_next_result.log_prob
             target_q = (rew + (1. - done) * self._gamma * target_q)
-        # critic 1
-        current_q1 = self.critic1(batch.obs, batch.act)
+        # critic
+        current_q1, current_q2 = self.critic(batch.obs, batch.act)
         critic1_loss = F.mse_loss(current_q1, target_q)
-        self.critic1_optim.zero_grad()
-        critic1_loss.backward()
-        self.critic1_optim.step()
-        # critic 2
-        current_q2 = self.critic2(batch.obs, batch.act)
         critic2_loss = F.mse_loss(current_q2, target_q)
-        self.critic2_optim.zero_grad()
-        critic2_loss.backward()
-        self.critic2_optim.step()
         # actor
         obs_result = self(batch)
         a = obs_result.act
-        current_q1a = self.critic1(batch.obs, a)
-        current_q2a = self.critic2(batch.obs, a)
-        actor_loss = (self._alpha * obs_result.log_prob - torch.min(
-            current_q1a, current_q2a)).mean()
+        current_q1a, current_q2a = self.critic(batch.obs, a)
+        actor_loss = (self._alpha * obs_result.log_prob - torch.min(current_q1a, current_q2a)).mean()
+
+        self.critic_optim.zero_grad()
+        critic1_loss.backward()
+        nn_utils.clip_grad_norm_(self.critic.parameters(), GRAD_L2_CLIP)
+        critic1_grad_max, critic1_grad_l2 = grad_statistics(self.critic)
+        self.critic_optim.step()
+
+        self.critic_optim.zero_grad()
+        critic2_loss.backward()
+        nn_utils.clip_grad_norm_(self.critic.parameters(), GRAD_L2_CLIP)
+        critic2_grad_max, critic2_grad_l2 = grad_statistics(self.critic)
+        self.critic_optim.step()
+
         self.actor_optim.zero_grad()
         actor_loss.backward()
+        nn_utils.clip_grad_norm_(self.actor.parameters(), GRAD_L2_CLIP)
+        actor_grad_max, actor_grad_l2 = grad_statistics(self.actor)
         self.actor_optim.step()
+
         alpha_loss = -(self.log_alpha * (obs_result.log_prob + self.target_entropy).detach()).mean()
         self.alpha_optim.zero_grad()
         alpha_loss.backward()
@@ -144,4 +135,11 @@ class SACPolicy(DDPGPolicy):
             'loss/critic1': critic1_loss.item(),
             'loss/critic2': critic2_loss.item(),
             'loss/alpha_loss': alpha_loss.item(),
+            'entropy/temprature': self._alpha.clone().item(),
+            'g/c1_max': critic1_grad_max,
+            'g/c1_l2': critic1_grad_l2,
+            'g/c2_max': critic2_grad_max,
+            'g/c2_l2': critic2_grad_l2,
+            'g/actor_max': actor_grad_max,
+            'g/actor_l2': actor_grad_l2
         }

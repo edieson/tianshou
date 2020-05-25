@@ -1,7 +1,8 @@
-import gym
-import numpy as np
 from abc import ABC, abstractmethod
 from multiprocessing import Process, Pipe
+
+import gym
+import numpy as np
 
 try:
     import ray
@@ -151,15 +152,13 @@ class VectorEnv(BaseVectorEnv):
             seed = [seed] * self.env_num
         result = []
         for e, s in zip(self.envs, seed):
-            if hasattr(e, 'seed'):
-                result.append(e.seed(s))
+            result.append(e.seed(s))
         return result
 
     def render(self, **kwargs):
         result = []
         for e in self.envs:
-            if hasattr(e, 'render'):
-                result.append(e.render(**kwargs))
+            result.append(e.render(**kwargs))
         return result
 
     def close(self):
@@ -183,9 +182,9 @@ def worker(parent, p, env_fn_wrapper):
                 p.close()
                 break
             elif cmd == 'render':
-                p.send(env.render(**data) if hasattr(env, 'render') else None)
+                p.send(env.render(**data))
             elif cmd == 'seed':
-                p.send(env.seed(data) if hasattr(env, 'seed') else None)
+                p.send(env.seed(data))
             else:
                 p.close()
                 raise NotImplementedError
@@ -205,8 +204,7 @@ class SubprocVectorEnv(BaseVectorEnv):
     def __init__(self, env_fns):
         super().__init__(env_fns)
         self.closed = False
-        self.parent_remote, self.child_remote = \
-            zip(*[Pipe() for _ in range(self.env_num)])
+        self.parent_remote, self.child_remote = zip(*[Pipe() for _ in range(self.env_num)])
         self.processes = [
             Process(target=worker, args=(
                 parent, child, CloudpickleWrapper(env_fn)), daemon=True)
