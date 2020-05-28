@@ -1,6 +1,15 @@
+from abc import ABC, abstractmethod
+
 import numpy as np
 from torch import nn
-from abc import ABC, abstractmethod
+
+
+class BaseEncoder(nn.Module):
+    def __init__(self):
+        super(BaseEncoder, self).__init__()
+
+    def forward(self, obs, hidden):
+        return obs, hidden
 
 
 class BasePolicy(ABC, nn.Module):
@@ -39,8 +48,18 @@ class BasePolicy(ABC, nn.Module):
         policy.load_state_dict(torch.load('policy.pth'))
     """
 
-    def __init__(self, **kwargs):
+    def __init__(self, state_encoder=None, **kwargs):
         super().__init__()
+        if state_encoder is None:
+            state_encoder = BaseEncoder()
+        self.state_encoder = state_encoder
+
+    def state_encode(self, batch):
+        hidden = batch.hidden
+        obs = batch.obs
+        state, _ = self.state_encoder(obs, hidden)
+        batch.obs = state
+        return batch
 
     def process_fn(self, batch, buffer, indice):
         """Pre-process the data from the provided replay buffer. Check out

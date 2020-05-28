@@ -1,15 +1,16 @@
-import os
-import gym
-import torch
-import pprint
 import argparse
+import os
+import pprint
+
+import gym
 import numpy as np
+import torch
 from torch.utils.tensorboard import SummaryWriter
 
+from tianshou.data import Collector, ReplayBuffer
 from tianshou.env import VectorEnv
 from tianshou.policy import TD3Policy
 from tianshou.trainer import offpolicy_trainer
-from tianshou.data import Collector, ReplayBuffer
 
 if __name__ == '__main__':
     from net import Actor, Critic
@@ -88,8 +89,7 @@ def test_td3(args=get_args()):
         [env.action_space.low[0], env.action_space.high[0]],
         reward_normalization=args.rew_norm, ignore_done=True)
     # collector
-    train_collector = Collector(
-        policy, train_envs, ReplayBuffer(args.buffer_size))
+    train_collector = Collector(policy, train_envs, ReplayBuffer(args.buffer_size))
     test_collector = Collector(policy, test_envs)
     # train_collector.collect(n_step=args.buffer_size)
     # log

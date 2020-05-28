@@ -1,13 +1,14 @@
-import os
-import gym
-import torch
-import pprint
 import argparse
+import os
+import pprint
+
+import gym
 import numpy as np
+import torch
 from torch.utils.tensorboard import SummaryWriter
 
-from tianshou.env import VectorEnv
 from tianshou.data import Collector, ReplayBuffer
+from tianshou.env import VectorEnv
 from tianshou.policy import A2CPolicy, ImitationPolicy
 from tianshou.trainer import onpolicy_trainer, offpolicy_trainer
 
@@ -69,16 +70,14 @@ def test_a2c(args=get_args()):
     net = Net(args.layer_num, args.state_shape, device=args.device)
     actor = Actor(net, args.action_shape).to(args.device)
     critic = Critic(net).to(args.device)
-    optim = torch.optim.Adam(list(
-        actor.parameters()) + list(critic.parameters()), lr=args.lr)
+    optim = torch.optim.Adam(list(actor.parameters()) + list(critic.parameters()), lr=args.lr)
     dist = torch.distributions.Categorical
     policy = A2CPolicy(
         actor, critic, optim, dist, args.gamma, gae_lambda=args.gae_lambda,
         vf_coef=args.vf_coef, ent_coef=args.ent_coef,
         max_grad_norm=args.max_grad_norm, reward_normalization=args.rew_norm)
     # collector
-    train_collector = Collector(
-        policy, train_envs, ReplayBuffer(args.buffer_size))
+    train_collector = Collector(policy, train_envs, ReplayBuffer(args.buffer_size), episodic=True)
     test_collector = Collector(policy, test_envs)
     # log
     log_path = os.path.join(args.logdir, args.task, 'a2c')

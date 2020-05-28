@@ -1,15 +1,16 @@
-import os
-import gym
-import torch
-import pprint
 import argparse
+import os
+import pprint
+
+import gym
 import numpy as np
+import torch
 from torch.utils.tensorboard import SummaryWriter
 
+from tianshou.data import Collector, ReplayBuffer
 from tianshou.env import VectorEnv
 from tianshou.policy import DQNPolicy
 from tianshou.trainer import offpolicy_trainer
-from tianshou.data import Collector, ReplayBuffer
 
 if __name__ == '__main__':
     from net import Recurrent
@@ -33,7 +34,7 @@ def get_args():
     parser.add_argument('--step-per-epoch', type=int, default=1000)
     parser.add_argument('--collect-per-step', type=int, default=10)
     parser.add_argument('--batch-size', type=int, default=64)
-    parser.add_argument('--layer-num', type=int, default=3)
+    parser.add_argument('--layer-num', type=int, default=1)
     parser.add_argument('--training-num', type=int, default=8)
     parser.add_argument('--test-num', type=int, default=100)
     parser.add_argument('--logdir', type=str, default='log')
@@ -71,9 +72,7 @@ def test_drqn(args=get_args()):
         use_target_network=args.target_update_freq > 0,
         target_update_freq=args.target_update_freq)
     # collector
-    train_collector = Collector(
-        policy, train_envs, ReplayBuffer(
-            args.buffer_size, stack_num=args.stack_num, ignore_obs_next=True))
+    train_collector = Collector(policy, train_envs, ReplayBuffer(args.buffer_size), episodic=True)
     # the stack_num is for RNN training: sample framestack obs
     test_collector = Collector(policy, test_envs)
     # policy.set_eps(1)

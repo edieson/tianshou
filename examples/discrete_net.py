@@ -1,7 +1,7 @@
-import torch
 import numpy as np
-from torch import nn
+import torch
 import torch.nn.functional as F
+from torch import nn
 
 
 class Net(nn.Module):
@@ -72,10 +72,10 @@ class DQN(nn.Module):
         self.fc = nn.Linear(linear_input_size, 512)
         self.head = nn.Linear(512, action_shape)
 
-    def forward(self, x, state=None, info={}):
+    def forward(self, x, state=None):
         if not isinstance(x, torch.Tensor):
             x = torch.tensor(x, device=self.device, dtype=torch.float)
-        x = x.permute(0, 3, 1, 2)
+        # x = x.permute(0, 3, 1, 2)
         x = F.relu(self.bn1(self.conv1(x)))
         x = F.relu(self.bn2(self.conv2(x)))
         x = F.relu(self.bn3(self.conv3(x)))

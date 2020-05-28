@@ -1,21 +1,20 @@
-import torch
-import pprint
 import argparse
+import pprint
+
 import numpy as np
+import torch
+from discrete_net import DQN
 from torch.utils.tensorboard import SummaryWriter
 
-from tianshou.policy import DQNPolicy
-from tianshou.env import SubprocVectorEnv
-from tianshou.trainer import offpolicy_trainer
 from tianshou.data import Collector, ReplayBuffer
-from tianshou.env.atari import create_atari_environment
-
-from discrete_net import DQN
+from tianshou.env import SubprocVectorEnv, ShmVecEnv
+from tianshou.policy import DQNPolicy
+from tianshou.trainer import offpolicy_trainer
 
 
 def get_args():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--task', type=str, default='Pong')
+    parser.add_argument('--task', type=str, default='PongNoFrameskip-v4')
     parser.add_argument('--seed', type=int, default=1626)
     parser.add_argument('--eps-test', type=float, default=0.05)
     parser.add_argument('--eps-train', type=float, default=0.1)
@@ -24,7 +23,7 @@ def get_args():
     parser.add_argument('--gamma', type=float, default=0.9)
     parser.add_argument('--n-step', type=int, default=1)
     parser.add_argument('--target-update-freq', type=int, default=320)
-    parser.add_argument('--epoch', type=int, default=100)
+    parser.add_argument('--epoch', type=int, default=2000)
     parser.add_argument('--step-per-epoch', type=int, default=1000)
     parser.add_argument('--collect-per-step', type=int, default=10)
     parser.add_argument('--batch-size', type=int, default=64)
@@ -40,18 +39,22 @@ def get_args():
     return args
 
 
+import gym
+from gym.wrappers import AtariPreprocessing, FrameStack
+
+
 def test_dqn(args=get_args()):
-    env = create_atari_environment(args.task)
+    env = FrameStack(AtariPreprocessing(gym.make(args.task), scale_obs=True), 4)
     args.state_shape = env.observation_space.shape or env.observation_space.n
     args.action_shape = env.env.action_space.shape or env.env.action_space.n
     # train_envs = gym.make(args.task)
     train_envs = SubprocVectorEnv([
-        lambda: create_atari_environment(args.task)
+        lambda: FrameStack(AtariPreprocessing(gym.make(args.task), scale_obs=True), 4)
         for _ in range(args.training_num)])
     # test_envs = gym.make(args.task)
-    test_envs = SubprocVectorEnv([
-        lambda: create_atari_environment(
-            args.task) for _ in range(args.test_num)])
+    test_envs = ShmVecEnv([
+        lambda: FrameStack(AtariPreprocessing(gym.make(args.task), scale_obs=True), 4)
+        for _ in range(args.test_num)])
     # seed
     np.random.seed(args.seed)
     torch.manual_seed(args.seed)
@@ -59,7 +62,7 @@ def test_dqn(args=get_args()):
     test_envs.seed(args.seed)
     # model
     net = DQN(
-        args.state_shape[0], args.state_shape[1],
+        args.state_shape[1], args.state_shape[2],
         args.action_shape, args.device)
     net = net.to(args.device)
     optim = torch.optim.Adam(net.parameters(), lr=args.lr)
@@ -68,11 +71,10 @@ def test_dqn(args=get_args()):
         use_target_network=args.target_update_freq > 0,
         target_update_freq=args.target_update_freq)
     # collector
-    train_collector = Collector(
-        policy, train_envs, ReplayBuffer(args.buffer_size))
+    train_collector = Collector(policy, train_envs, ReplayBuffer(args.buffer_size), episodic=True)
     test_collector = Collector(policy, test_envs)
     # policy.set_eps(1)
-    train_collector.collect(n_step=args.batch_size * 4)
+    train_collector.collect(n_step=10000, sampling=True)
     print(len(train_collector.buffer))
     # log
     writer = SummaryWriter(args.logdir + '/' + 'dqn')
@@ -101,7 +103,7 @@ def test_dqn(args=get_args()):
     if __name__ == '__main__':
         pprint.pprint(result)
         # Let's watch its performance!
-        env = create_atari_environment(args.task)
+        env = FrameStack(AtariPreprocessing(gym.make(args.task), scale_obs=True), 4)
         collector = Collector(policy, env)
         result = collector.collect(n_episode=1, render=args.render)
         print(f'Final reward: {result["rew"]}, length: {result["len"]}')

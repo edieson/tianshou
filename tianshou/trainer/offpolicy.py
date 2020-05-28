@@ -79,9 +79,7 @@ def offpolicy_trainer(policy,
                         for k in result.keys():
                             data[k] = f'{result[k]:.2f}'
                         t.set_postfix(**data)
-                        return gather_info(
-                            start_time, train_collector, test_collector,
-                            test_result['ep/reward'])
+                        return gather_info(start_time, train_collector, test_collector, test_result['ep/reward'])
                     else:
                         policy.train()
                         if train_fn:

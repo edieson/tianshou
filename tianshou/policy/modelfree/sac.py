@@ -102,8 +102,7 @@ class SACPolicy(DDPGPolicy):
         critic2_loss = F.mse_loss(current_q2, target_q)
         # actor
         obs_result = self(batch)
-        a = obs_result.act
-        current_q1a, current_q2a = self.critic(batch.obs, a)
+        current_q1a, current_q2a = self.critic(batch.obs, obs_result.act)
         actor_loss = (self._alpha * obs_result.log_prob - torch.min(current_q1a, current_q2a)).mean()
 
         self.critic_optim.zero_grad()

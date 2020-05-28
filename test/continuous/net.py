@@ -1,5 +1,5 @@
-import torch
 import numpy as np
+import torch
 from torch import nn
 
 
@@ -39,8 +39,8 @@ class ActorProb(nn.Module):
             self.model += [nn.Linear(128, 128), nn.ReLU(inplace=True)]
         self.model = nn.Sequential(*self.model)
         self.mu = nn.Linear(128, np.prod(action_shape))
-        self.sigma = nn.Parameter(torch.zeros(np.prod(action_shape), 1))
-        # self.sigma = nn.Linear(128, np.prod(action_shape))
+        # self.sigma = nn.Parameter(torch.zeros(np.prod(action_shape), 1))
+        self.log_std = nn.Linear(128, np.prod(action_shape))
         self._max = max_action
 
     def forward(self, s, **kwargs):
@@ -50,13 +50,8 @@ class ActorProb(nn.Module):
         s = s.view(batch, -1)
         logits = self.model(s)
         mu = self.mu(logits)
-        shape = [1] * len(mu.shape)
-        shape[1] = -1
-        sigma = (self.sigma.view(shape) + torch.zeros_like(mu)).exp()
-        # assert sigma.shape == mu.shape
-        # mu = self._max * torch.tanh(self.mu(logits))
-        # sigma = torch.exp(self.sigma(logits))
-        return (mu, sigma), None
+        std = self.log_std(logits).exp()
+        return (mu, std), None
 
 
 class Critic(nn.Module):
@@ -83,6 +78,34 @@ class Critic(nn.Module):
             s = torch.cat([s, a], dim=1)
         logits = self.model(s)
         return logits
+
+
+class DQCritic(nn.Module):
+    def __init__(self, layer_num, state_shape, action_shape=0, device='cpu'):
+        super().__init__()
+        self.device = device
+        self.model1 = [nn.Linear(np.prod(state_shape) + np.prod(action_shape), 128), nn.ReLU()]
+        self.model2 = [nn.Linear(np.prod(state_shape) + np.prod(action_shape), 128), nn.ReLU()]
+        for i in range(layer_num):
+            self.model1.extend([nn.Linear(128, 128), nn.ReLU()])
+            self.model2.extend([nn.Linear(128, 128), nn.ReLU()])
+        self.model1.extend([nn.Linear(128, 1)])
+        self.model2.extend([nn.Linear(128, 1)])
+        self.model1 = nn.Sequential(*self.model1)
+        self.model2 = nn.Sequential(*self.model2)
+
+    def forward(self, s, a=None, **kwargs):
+        if not isinstance(s, torch.Tensor):
+            s = torch.tensor(s, device=self.device, dtype=torch.float)
+        batch = s.shape[0]
+        s = s.view(batch, -1)
+        if not isinstance(a, torch.Tensor):
+            a = torch.tensor(a, device=self.device, dtype=torch.float)
+        a = a.view(batch, -1)
+        s = torch.cat([s, a], dim=1)
+        logits1 = self.model1(s)
+        logits2 = self.model2(s)
+        return logits1, logits2
 
 
 class RecurrentActorProb(nn.Module):

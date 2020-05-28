@@ -82,7 +82,7 @@ class Collector(object):
             self.env = env
         self._collect_step = 0
         self._collect_episode = 0
-        self.collect_time = 0
+        self._collect_time = 0
         self.buffer = buffer
         self.policy = policy
         self.process_fn = policy.process_fn
@@ -107,7 +107,7 @@ class Collector(object):
         self._episode_reward.clear()
         self._collect_step = 0
         self._collect_episode = 0
-        self.collect_time = 0
+        self._collect_time = 0
 
     def reset_buffer(self):
         """Reset the main data buffer."""
@@ -255,7 +255,7 @@ class Collector(object):
         self._episode_speed.append(cur_episode / duration)
         self._collect_step += cur_step
         self._collect_episode += cur_episode
-        self.collect_time += duration
+        self._collect_time += duration
         return {
             'n/ep': cur_episode,
             'n/st': cur_step,

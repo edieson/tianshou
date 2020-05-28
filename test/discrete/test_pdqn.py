@@ -1,15 +1,16 @@
-import os
-import gym
-import torch
-import pprint
 import argparse
+import os
+import pprint
+
+import gym
 import numpy as np
+import torch
 from torch.utils.tensorboard import SummaryWriter
 
+from tianshou.data import Collector, ReplayBuffer, PrioritizedReplayBuffer
 from tianshou.env import VectorEnv
 from tianshou.policy import DQNPolicy
 from tianshou.trainer import offpolicy_trainer
-from tianshou.data import Collector, ReplayBuffer, PrioritizedReplayBuffer
 
 if __name__ == '__main__':
     from net import Net
@@ -37,7 +38,7 @@ def get_args():
     parser.add_argument('--test-num', type=int, default=100)
     parser.add_argument('--logdir', type=str, default='log')
     parser.add_argument('--render', type=float, default=0.)
-    parser.add_argument('--prioritized-replay', type=int, default=1)
+    parser.add_argument('--prioritized-replay', type=bool, default=True)
     parser.add_argument('--alpha', type=float, default=0.5)
     parser.add_argument('--beta', type=float, default=0.5)
     parser.add_argument(
@@ -72,13 +73,12 @@ def test_pdqn(args=get_args()):
         use_target_network=args.target_update_freq > 0,
         target_update_freq=args.target_update_freq)
     # collector
-    if args.prioritized_replay > 0:
+    if args.prioritized_replay:
         buf = PrioritizedReplayBuffer(
-            args.buffer_size, alpha=args.alpha, beta=args.alpha)
+            args.buffer_size, alpha=args.alpha, beta=args.beta)
     else:
         buf = ReplayBuffer(args.buffer_size)
-    train_collector = Collector(
-        policy, train_envs, buf)
+    train_collector = Collector(policy, train_envs, buf, episodic=True)
     test_collector = Collector(policy, test_envs)
     # policy.set_eps(1)
     train_collector.collect(n_step=args.batch_size)

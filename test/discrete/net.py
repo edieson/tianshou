@@ -1,7 +1,7 @@
-import torch
 import numpy as np
-from torch import nn
+import torch
 import torch.nn.functional as F
+from torch import nn
 
 
 class Net(nn.Module):
@@ -60,13 +60,14 @@ class Recurrent(nn.Module):
         self.action_shape = action_shape
         self.device = device
         self.fc1 = nn.Linear(np.prod(state_shape), 128)
-        self.nn = nn.LSTM(input_size=128, hidden_size=128,
-                          num_layers=layer_num, batch_first=True)
+        self.nn = nn.LSTM(input_size=128, hidden_size=128, num_layers=layer_num)
         self.fc2 = nn.Linear(128, np.prod(action_shape))
 
-    def forward(self, s, state=None, info={}):
+    def forward(self, s, state=None):
         if not isinstance(s, torch.Tensor):
             s = torch.tensor(s, device=self.device, dtype=torch.float)
+        if state is not None and not isinstance(state, torch.Tensor):
+            state = torch.tensor(state, device=self.device, dtype=torch.float)
         # s [bsz, len, dim] (training) or [bsz, dim] (evaluation)
         # In short, the tensor's shape in training phase is longer than which
         # in evaluation phase.
@@ -75,17 +76,16 @@ class Recurrent(nn.Module):
             length = 1
         else:
             bsz, length, dim = s.shape
-        s = self.fc1(s.view([bsz * length, dim]))
-        s = s.view(bsz, length, -1)
+        s = self.fc1(s)
+        s = s.view(length, bsz, -1)
+        hidden = None
+        if state is not None:
+            state = state.view(length, bsz, -1)
+            hn, cn = torch.chunk(state, 2, dim=-1)
+            hidden = (hn.contiguous(), cn.contiguous())
         self.nn.flatten_parameters()
-        if state is None:
-            s, (h, c) = self.nn(s)
-        else:
-            # we store the stack data in [bsz, len, ...] format
-            # but pytorch rnn needs [len, bsz, ...]
-            s, (h, c) = self.nn(s, (state['h'].transpose(0, 1).contiguous(),
-                                    state['c'].transpose(0, 1).contiguous()))
-        s = self.fc2(s[:, -1])
+        # we store the stack data in [bsz, len, ...] format
+        s, (h, c) = self.nn(s, hidden)
+        s = self.fc2(s[-1, :])
         # please ensure the first dim is batch size: [bsz, len, ...]
-        return s, {'h': h.transpose(0, 1).detach(),
-                   'c': c.transpose(0, 1).detach()}
+        return s, torch.cat((h, c), -1).detach()

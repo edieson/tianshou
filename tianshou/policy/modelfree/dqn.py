@@ -117,8 +117,7 @@ class DQNPolicy(BasePolicy):
                 batch.loss += loss
         return batch
 
-    def forward(self, batch, state=None,
-                model='model', input='obs', eps=None, **kwargs):
+    def forward(self, batch, state=None, model='model', input='obs', eps=None, **kwargs):
         """Compute action over the given batch data.
 
         :param float eps: in [0, 1], for epsilon-greedy exploration method.

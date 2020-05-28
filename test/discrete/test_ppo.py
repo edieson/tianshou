@@ -1,15 +1,16 @@
-import os
-import gym
-import torch
-import pprint
 import argparse
+import os
+import pprint
+
+import gym
 import numpy as np
+import torch
 from torch.utils.tensorboard import SummaryWriter
 
+from tianshou.data import Collector, ReplayBuffer
 from tianshou.env import VectorEnv
 from tianshou.policy import PPOPolicy
 from tianshou.trainer import onpolicy_trainer
-from tianshou.data import Collector, ReplayBuffer
 
 if __name__ == '__main__':
     from net import Net, Actor, Critic
@@ -86,8 +87,7 @@ def test_ppo(args=get_args()):
         dual_clip=args.dual_clip,
         value_clip=args.value_clip)
     # collector
-    train_collector = Collector(
-        policy, train_envs, ReplayBuffer(args.buffer_size))
+    train_collector = Collector(policy, train_envs, ReplayBuffer(args.buffer_size), episodic=True)
     test_collector = Collector(policy, test_envs)
     # log
     log_path = os.path.join(args.logdir, args.task, 'ppo')

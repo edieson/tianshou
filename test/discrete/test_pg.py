@@ -1,16 +1,17 @@
-import os
-import gym
-import time
-import torch
-import pprint
 import argparse
+import os
+import pprint
+import time
+
+import gym
 import numpy as np
+import torch
 from torch.utils.tensorboard import SummaryWriter
 
+from tianshou.data import Batch, Collector, ReplayBuffer
 from tianshou.env import VectorEnv
 from tianshou.policy import PGPolicy
 from tianshou.trainer import onpolicy_trainer
-from tianshou.data import Batch, Collector, ReplayBuffer
 
 if __name__ == '__main__':
     from net import Net
@@ -133,11 +134,9 @@ def test_pg(args=get_args()):
     net = net.to(args.device)
     optim = torch.optim.Adam(net.parameters(), lr=args.lr)
     dist = torch.distributions.Categorical
-    policy = PGPolicy(net, optim, dist, args.gamma,
-                      reward_normalization=args.rew_norm)
+    policy = PGPolicy(net, optim, dist, args.gamma, reward_normalization=args.rew_norm)
     # collector
-    train_collector = Collector(
-        policy, train_envs, ReplayBuffer(args.buffer_size))
+    train_collector = Collector(policy, train_envs, ReplayBuffer(args.buffer_size), episodic=True)
     test_collector = Collector(policy, test_envs)
     # log
     log_path = os.path.join(args.logdir, args.task, 'pg')
